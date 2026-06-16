@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Jogo São Cristóvão — Chute a Gol!</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: system-ui, sans-serif; background: #f5f5f5; display: flex; justify-content: center; align-items: flex-start; min-height: 100vh; padding: 16px; }
+.container { width: 100%; max-width: 640px; background: white; border-radius: 16px; padding: 20px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
+h1 { font-size: 18px; font-weight: 500; color: #1a1a1a; text-align: center; margin: 0; }
+.sub { font-size: 13px; color: #666; text-align: center; margin: 4px 0 6px; }
+.diff-badge { display: inline-block; background: #fff3e0; color: #e65100; font-size: 11px; padding: 2px 10px; border-radius: 20px; font-weight: 500; margin: 0 auto 10px; display: block; width: fit-content; }
+.score-box { display: flex; gap: 12px; justify-content: center; margin: 10px 0; flex-wrap: wrap; }
+.score-card { background: #f5f5f5; border-radius: 8px; padding: 8px 18px; text-align: center; min-width: 80px; }
+.score-label { font-size: 11px; color: #666; }
+.score-num { font-size: 26px; font-weight: 500; color: #1a1a1a; }
+.msg { font-size: 13px; color: #666; text-align: center; min-height: 20px; margin: 4px 0; }
+canvas { display: block; width: 100%; cursor: crosshair; border-radius: 12px; }
+.btn-game { background: #c62828; color: white; border: none; border-radius: 8px; padding: 10px 28px; font-size: 14px; font-weight: 500; cursor: pointer; margin: 10px auto; display: block; transition: background 0.2s; }
+.btn-game:hover { background: #b71c1c; }
+.footer { font-size: 11px; color: #999; text-align: center; margin-top: 12px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Restaurante São Cristóvão</h1>
+  <p class="sub">Marque um gol enquanto seu pedido é preparado!</p>
+  <span class="diff-badge">Dificuldade média</span>
+
+  <div class="score-box">
+    <div class="score-card"><div class="score-label">Gols</div><div class="score-num" id="goals">0</div></div>
+    <div class="score-card"><div class="score-label">Tentativas</div><div class="score-num" id="attempts">0</div></div>
+    <div class="score-card"><div class="score-label">Aproveitamento</div><div class="score-num" id="rate">0%</div></div>
+  </div>
+
+  <p class="msg" id="msg">Mire e clique para chutar!</p>
+
+  <canvas id="gc" width="600" height="340"></canvas>
+
+  <button class="btn-game" id="resetBtn">Nova partida</button>
+  <p class="footer">Seu pedido está sendo preparado com carinho!</p>
+</div>
+
+<script>
+const c = document.getElementById('gc');
+const ctx = c.getContext('2d');
+
+let goals=0, attempts=0;
+let bx=300, by=295, br=15;
+let animating=false;
+let kx=300, kDir=1, kSpeed=1.8;
+let parts=[];
+let resultText='', resultAlpha=0;
+let aimX=-1, aimY=-1;
+
+const GX=130, GW=340, GY=45, GH=90;
+
+function lerp(a,b,t){ return a+(b-a)*t; }
+
+function sky(){
+  const g=ctx.createLinearGradient(0,0,0,160);
+  g.addColorStop(0,'#1565c0'); g.addColorStop(1,'#42a5f5');
+  ctx.fillStyle=g; ctx.fillRect(0,0,600,160);
+  ctx.fillStyle='rgba(255,255,255,0.75)';
+  [[80,30,25,12],[200,45,20,10],[420,28,30,13],[530,38,18,9],[310,20,14,7]].forEach(([cx,cy,rw,rh])=>{
+    ctx.beginPath(); ctx.ellipse(cx,cy,rw,rh,0,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx+18,cy-4,rw*.65,rh*.65,0,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx-14,cy+3,rw*.55,rh*.55,0,0,Math.PI*2); ctx.fill();
+  });
+}
+
+function grass(){
+  const g=ctx.createLinearGradient(0,155,0,340);
+  g.addColorStop(0,'#388e3c'); g.addColorStop(1,'#2e7d32');
+  ctx.fillStyle=g; ctx.fillRect(0,155,600,185);
+  for(let i=0;i<10;i++){
+    ctx.fillStyle=i%2===0?'rgba(0,0,0,0.06)':'rgba(255,255,255,0.04)';
+    ctx.fillRect(i*60,155,60,185);
+  }
+  ctx.strokeStyle='rgba(255,255,255,0.45)'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(0,200); ctx.lineTo(600,200); ctx.stroke();
+  ctx.beginPath(); ctx.arc(300,340,90,Math.PI,0); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(300,155); ctx.lineTo(300,340); ctx.stroke();
+  ctx.strokeRect(0,155,600,185);
+  ctx.strokeRect(200,155,200,60);
+  ctx.strokeRect(100,155,400,100);
+}
+
+function drawGoal(){
+  ctx.shadowColor='rgba(0,0,0,0.35)'; ctx.shadowBlur=10;
+  ctx.strokeStyle='#eceff1'; ctx.lineWidth=5;
+  ctx.strokeRect(GX,GY,GW,GH); ctx.shadowBlur=0;
+  ctx.strokeStyle='rgba(200,200,200,0.2)'; ctx.lineWidth=1;
+  for(let gx=GX;gx<=GX+GW;gx+=34){ ctx.beginPath(); ctx.moveTo(gx,GY); ctx.lineTo(gx,GY+GH); ctx.stroke(); }
+  for(let gy=GY;gy<=GY+GH;gy+=22){ ctx.beginPath(); ctx.moveTo(GX,gy); ctx.lineTo(GX+GW,gy); ctx.stroke(); }
+  ctx.fillStyle='rgba(100,180,255,0.07)'; ctx.fillRect(GX,GY,GW,GH);
+  ctx.fillStyle='rgba(0,0,0,0.18)'; ctx.fillRect(GX+3,GY+GH,GW-6,8);
+}
+
+function drawKeeper(){
+  const ky=GY+GH;
+  ctx.fillStyle='#37474f'; ctx.fillRect(kx-6,ky-6,12,6);
+  ctx.fillStyle='#ff6f00';
+  ctx.beginPath(); ctx.roundRect(kx-16,ky-52,32,46,4); ctx.fill();
+  ctx.fillStyle='#ffe0b2'; ctx.beginPath(); ctx.arc(kx,ky-62,16,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#5d4037'; ctx.beginPath(); ctx.ellipse(kx,ky-76,17,8,0,Math.PI,0); ctx.fill();
+  ctx.fillStyle='#3e2723';
+  ctx.beginPath(); ctx.arc(kx-5,ky-65,3,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(kx+5,ky-65,3,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='#4e342e'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.arc(kx,ky-56,4,0.2,Math.PI-0.2); ctx.stroke();
+  ctx.fillStyle='#ff6f00';
+  ctx.beginPath(); ctx.roundRect(kx-30,ky-46,15,7,3); ctx.fill();
+  ctx.beginPath(); ctx.roundRect(kx+15,ky-46,15,7,3); ctx.fill();
+  ctx.fillStyle='#1b5e20'; ctx.fillRect(kx-10,ky-6,9,22); ctx.fillRect(kx+1,ky-6,9,22);
+  ctx.fillStyle='#212121'; ctx.fillRect(kx-11,ky+14,11,6); ctx.fillRect(kx,ky+14,11,6);
+}
+
+function drawPlayer(){
+  const px=300,py=295;
+  ctx.fillStyle='#212121'; ctx.fillRect(px-7,py+2,7,5); ctx.fillRect(px,py+2,7,5);
+  ctx.fillStyle='#1565c0'; ctx.fillRect(px-9,py-14,8,18); ctx.fillRect(px+1,py-14,8,18);
+  ctx.fillStyle='#c62828'; ctx.beginPath(); ctx.roundRect(px-14,py-52,28,40,4); ctx.fill();
+  ctx.fillStyle='#ef5350'; ctx.fillRect(px-14,py-52,28,5);
+  ctx.fillStyle='#ffccbc'; ctx.beginPath(); ctx.arc(px,py-60,14,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#4e342e'; ctx.beginPath(); ctx.ellipse(px,py-73,15,7,0,Math.PI,0); ctx.fill();
+  ctx.fillStyle='#3e2723';
+  ctx.beginPath(); ctx.arc(px-5,py-63,2.5,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(px+5,py-63,2.5,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='#b71c1c'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.arc(px,py-54,4,0.2,Math.PI-0.2); ctx.stroke();
+  ctx.fillStyle='#ffccbc';
+  ctx.beginPath(); ctx.roundRect(px-26,py-44,12,6,3); ctx.fill();
+  ctx.beginPath(); ctx.roundRect(px+14,py-44,12,6,3); ctx.fill();
+}
+
+function drawBall(bxp,byp,brp){
+  ctx.shadowColor='rgba(0,0,0,0.4)'; ctx.shadowBlur=8;
+  ctx.fillStyle='white'; ctx.beginPath(); ctx.arc(bxp,byp,brp,0,Math.PI*2); ctx.fill();
+  ctx.shadowBlur=0;
+  const pents=[[0,-1],[0.95,-0.31],[0.59,0.81],[-0.59,0.81],[-0.95,-0.31]];
+  ctx.beginPath();
+  pents.forEach(([px2,py2],i)=>{ const nx=bxp+px2*brp*.5,ny=byp+py2*brp*.5; if(i===0)ctx.moveTo(nx,ny); else ctx.lineTo(nx,ny); });
+  ctx.closePath(); ctx.fillStyle='#212121'; ctx.fill();
+  pents.forEach(([px2,py2])=>{ ctx.beginPath(); ctx.moveTo(bxp+px2*brp*.5,byp+py2*brp*.5); ctx.lineTo(bxp+px2*brp*.92,byp+py2*brp*.92); ctx.strokeStyle='#212121'; ctx.lineWidth=1; ctx.stroke(); });
+  ctx.beginPath(); ctx.arc(bxp,byp,brp,0,Math.PI*2); ctx.strokeStyle='#ddd'; ctx.lineWidth=1; ctx.stroke();
+}
+
+function drawParticles(){ parts.forEach(p=>{ ctx.globalAlpha=p.life; ctx.fillStyle=p.color; ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill(); }); ctx.globalAlpha=1; }
+
+function drawAim(){
+  if(aimX<0) return;
+  ctx.strokeStyle='rgba(255,255,0,0.65)'; ctx.lineWidth=2; ctx.setLineDash([6,4]);
+  ctx.beginPath(); ctx.moveTo(300,295); ctx.lineTo(aimX,aimY); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle='rgba(255,255,0,0.4)'; ctx.beginPath(); ctx.arc(aimX,aimY,11,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='rgba(255,200,0,0.85)'; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(aimX,aimY,11,0,Math.PI*2); ctx.stroke();
+  ctx.strokeStyle='rgba(255,200,0,0.5)'; ctx.lineWidth=1; ctx.beginPath(); ctx.arc(aimX,aimY,18,0,Math.PI*2); ctx.stroke();
+}
+
+function drawResult(){
+  if(!resultText||resultAlpha<=0) return;
+  ctx.globalAlpha=resultAlpha; ctx.font='bold 48px sans-serif'; ctx.textAlign='center';
+  const isGoal=resultText.includes('GOL');
+  ctx.fillStyle=isGoal?'#ffeb3b':'#ff5252'; ctx.strokeStyle=isGoal?'#e65100':'#b71c1c'; ctx.lineWidth=5;
+  ctx.strokeText(resultText,300,190); ctx.fillText(resultText,300,190);
+  ctx.textAlign='left'; ctx.globalAlpha=1;
+}
+
+function render(){
+  ctx.clearRect(0,0,600,340);
+  sky(); grass(); drawGoal(); drawKeeper(); drawPlayer();
+  drawBall(bx,by,br); drawParticles(); drawAim(); drawResult();
+}
+
+function spawnParticles(px2,py2,c1,c2){
+  for(let i=0;i<22;i++){
+    const a=Math.random()*Math.PI*2,s=2+Math.random()*5;
+    parts.push({x:px2,y:py2,vx:Math.cos(a)*s,vy:Math.sin(a)*s,r:3+Math.random()*5,life:1,color:i%2===0?c1:c2});
+  }
+}
+
+function shoot(tx,ty){
+  if(animating) return;
+  aimX=-1; animating=true; attempts++;
+  document.getElementById('attempts').textContent=attempts;
+  document.getElementById('msg').textContent='';
+  resultText=''; resultAlpha=0;
+  const sx=bx,sy=by,frames=42;
+  let f=0;
+  const ks=kx, kr=100, diff=tx-ks;
+  const kt2=ks+Math.sign(diff)*Math.min(Math.abs(diff)*.65,kr);
+  function anim(){
+    f++;
+    const t=f/frames,e=t<.5?2*t*t:-1+(4-2*t)*t;
+    bx=lerp(sx,tx,e); by=lerp(sy,ty,e)-Math.sin(t*Math.PI)*75; br=15-t*4;
+    if(t>.25){ const kt=(t-.25)/.75; kx=lerp(ks,kt2,kt*kt); }
+    parts=parts.filter(p=>p.life>0);
+    parts.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.vy+=.2;p.life-=.025;});
+    render();
+    if(f<frames){requestAnimationFrame(anim);return;}
+    const inGoal=bx>GX+5&&bx<GX+GW-5&&by>GY+5&&by<GY+GH-5;
+    const saved=Math.abs(bx-kx)<28;
+    if(inGoal&&!saved){
+      goals++; document.getElementById('goals').textContent=goals;
+      resultText='GOL!'; resultAlpha=1;
+      spawnParticles(bx,by,'#ffeb3b','#ff9800');
+      document.getElementById('msg').textContent='Que golaço! Seu pedido vai ficar ainda mais gostoso!';
+    } else {
+      resultText=saved?'Defendido!':'Fora!'; resultAlpha=1;
+      spawnParticles(saved?kx:bx,saved?GY+GH-20:by,'#ff5252','#ff8a80');
+      document.getElementById('msg').textContent=saved?'Boa defesa! Tente enganar o goleiro!':'Mandou pra fora! Mire melhor!';
+    }
+    document.getElementById('rate').textContent=Math.round((goals/attempts)*100)+'%';
+    let fade=0;
+    function fadeOut(){
+      fade++; resultAlpha=Math.max(0,1-fade/40);
+      parts=parts.filter(p=>p.life>0);
+      parts.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.vy+=.2;p.life-=.025;});
+      render();
+      if(fade<55) requestAnimationFrame(fadeOut);
+      else{ resultText='';resultAlpha=0;bx=300;by=295;br=15;animating=false;render(); }
+    }
+    requestAnimationFrame(fadeOut);
+  }
+  requestAnimationFrame(anim);
+}
+
+c.addEventListener('mousemove',function(e){
+  if(animating) return;
+  const r=c.getBoundingClientRect();
+  aimX=(e.clientX-r.left)*(600/r.width);
+  aimY=(e.clientY-r.top)*(340/r.height);
+});
+c.addEventListener('mouseleave',function(){if(!animating){aimX=-1;aimY=-1;}});
+c.addEventListener('click',function(e){
+  if(animating) return;
+  const r=c.getBoundingClientRect();
+  const tx=(e.clientX-r.left)*(600/r.width);
+  const ty=(e.clientY-r.top)*(340/r.height);
+  shoot(GX+(tx-GX)*.75+GW*.12, GY+(ty-GY)*.65+GH*.08);
+});
+document.getElementById('resetBtn').addEventListener('click',function(){
+  goals=0;attempts=0;
+  document.getElementById('goals').textContent='0';
+  document.getElementById('attempts').textContent='0';
+  document.getElementById('rate').textContent='0%';
+  document.getElementById('msg').textContent='Mire e clique para chutar!';
+  bx=300;by=295;br=15;kx=300;parts=[];resultText='';resultAlpha=0;animating=false;aimX=-1;aimY=-1;
+});
+
+function loop(){
+  if(!animating){kx+=kDir*kSpeed;if(kx>GX+GW-30)kDir=-1;if(kx<GX+30)kDir=1;}
+  render(); requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
